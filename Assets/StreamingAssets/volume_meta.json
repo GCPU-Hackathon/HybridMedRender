@@ -1,0 +1,46 @@
+{
+  "dim": [
+    240,
+    240,
+    155
+  ],
+  "spacing_mm": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "dtype": "float32",
+  "intensity_range": [
+    0.0,
+    4.0
+  ],
+  "affine": [
+    [
+      1.0,
+      0.0,
+      0.0,
+      -239.0
+    ],
+    [
+      0.0,
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "mode": "multi_label_channels",
+  "endianness": "little",
+  "order": "x-fast,y-then,z-outer"
+}
