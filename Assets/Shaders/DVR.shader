@@ -4,8 +4,11 @@ Shader "Custom/VolumeDVR"
     {
         _VolumeTex   ("VolumeTex", 3D) = "" {}
         _TFTex       ("Transfer LUT", 2D) = "" {}
+        _LabelCtrlTex ("Label Ctrl Tex", 2D) = "" {}
 
-        _StepSize    ("Step Size", Range(0.0005, 0.02)) = 0.003
+        // _StepSize    ("Step Size", Range(0.0005, 0.02)) = 0.003
+        _SampleCount ("Sample Count", Range(32, 1024)) = 256
+
         _Brightness  ("Brightness", Range(0,5)) = 1.5
         _AlphaScale  ("Alpha Scale", Range(0,2)) = 0.5
 
@@ -36,8 +39,15 @@ Shader "Custom/VolumeDVR"
             // === Uniforms ===
             sampler3D _VolumeTex;   // volume 3D RFloat
             sampler2D _TFTex;       // LUT 1D (256x1 RGBAFloat)
+            sampler2D _LabelCtrlTex;
 
-            float _StepSize;
+            float4x4 _Affine;      // voxel -> patient(mm)
+            float4x4 _InvAffine;   // patient(mm) -> voxel
+            float4   _Dim;         // (dimX, dimY, dimZ, 1)
+
+            //NOTE - float _StepSize;
+            int _SampleCount;
+
             float _Brightness;
             float _AlphaScale;
 
@@ -72,6 +82,11 @@ Shader "Custom/VolumeDVR"
 
             // === Utils ===
 
+            float rand(float2 co)
+            {
+                return frac(sin(dot(co.xy, float2(12.9898, 78.233))) * 43758.5453);
+            }
+
             // Intersection rayon / box en espace objet (cube [-0.5,+0.5]^3)
             bool RayBoxIntersect(float3 rayOrigin, float3 rayDir, out float tEnter, out float tExit)
             {
@@ -90,10 +105,8 @@ Shader "Custom/VolumeDVR"
                 return (tExit > max(tEnter, 0.0));
             }
 
-            // Estimation du gradient local => pseudo-normale pour l'éclairage
             float3 EstimateNormal(float3 pObj)
             {
-                // eps en espace objet (cube ~1 unité de côté)
                 float eps = 0.002;
 
                 float3 uvw_xp = (pObj + float3(+eps,0,0)) + 0.5;
@@ -123,91 +136,88 @@ Shader "Custom/VolumeDVR"
             {
                 if (_IsLabelMap == 1)
                 {
-                    // segmentation : val ≈ classe
-                    float idx = round(val);         // 0..255 possible
+                    float idx = round(val);
                     idx = clamp(idx, 0.0, 255.0);
                     float u = idx / 255.0;
-                    float4 tf = tex2D(_TFTex, float2(u, 0.5));
-                    return tf; // rgb, a
+
+                    float4 tfBase = tex2D(_TFTex, float2(u, 0.5));
+
+                    float4 ctrl = tex2D(_LabelCtrlTex, float2(u, 0.5));
+
+                    float3 rgb = tfBase.rgb * ctrl.rgb;
+
+                    float  a   = tfBase.a * ctrl.a;
+
+                    return float4(rgb, a);
                 }
                 else
                 {
-                    // intensité continue : renormaliser avec P1..P99 en [0,1]
                     float normVal = (val - _P1) / max((_P99 - _P1), 1e-6);
                     normVal = saturate(normVal);
-                    float u = normVal;
-                    float4 tf = tex2D(_TFTex, float2(u, 0.5));
+
+                    float4 tf = tex2D(_TFTex, float2(normVal, 0.5));
                     return tf;
                 }
             }
 
-            // === Fragment shader (raymarch DVR) ===
             fixed4 frag (v2f i) : SV_Target
             {
-                // reconstruire le rayon caméra -> fragment en ESPACE OBJET du cube
                 float3 camPosObj  = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos,1)).xyz;
                 float3 fragPosObj = mul(unity_WorldToObject, float4(i.worldPos,1)).xyz;
                 float3 rayDirObj  = normalize(fragPosObj - camPosObj);
 
-                // intersection avec le volume
                 float tEnter, tExit;
                 if (!RayBoxIntersect(camPosObj, rayDirObj, tEnter, tExit))
                     return float4(0,0,0,0);
 
                 float t = max(tEnter, 0.0);
+                
+                float rayLength = max(0.0, tExit - t);
+                if (rayLength < 0.0001)
+                    return float4(0,0,0,0);
 
-                // accumulation front-to-back
+                float dt = rayLength / (float)_SampleCount;
+
+                t += rand(i.pos.xy) * dt;
+
                 float3 accRGB = float3(0,0,0);
                 float  accA   = 0.0;
 
-                // direction de lumière en espace objet (projette la dir monde)
                 float3 Lobj = mul((float3x3)unity_WorldToObject, normalize(_LightDir.xyz));
 
-                // boucle de raymarch
-                const int MAX_STEPS = 2048;
+                const int MAX_STEPS = 1024;
                 [loop]
                 for (int step = 0; step < MAX_STEPS; step++)
                 {
                     if (t > tExit) break;
-                    if (accA >= 0.9999) break; // laisse passer énormément de couches
+                    if (accA >= 0.9999) break;
 
-                    // position courante dans l'espace objet
                     float3 pObj = camPosObj + rayDirObj * t;
 
-                    // coordonnées [0,1]^3 pour sampler la texture 3D
                     float3 uvw = pObj + 0.5;
-                    if (any(uvw < 0.0) || any(uvw > 1.0))
-                        break;
 
-                    // valeur brute du voxel
                     float voxelVal = tex3D(_VolumeTex, uvw).r;
 
-                    // couleur / alpha depuis la TF
                     float4 tf = SampleTF(voxelVal);
 
-                    // on adoucit l'opacité locale via _AlphaScale
                     float aSample = tf.a * _AlphaScale;
 
                     if (aSample > 0.001)
                     {
-                        // shading local basé sur le gradient du volume
                         float3 N = EstimateNormal(pObj);
                         float lambert = saturate(dot(normalize(N), normalize(Lobj)));
                         float lighting = _Ambient + _LightIntensity * lambert;
 
                         float3 litColor = tf.rgb * lighting;
 
-                        // intégration front-to-back
                         float remain = 1.0 - accA;
                         accRGB += remain * litColor * aSample;
                         accA   += remain * aSample;
                     }
 
-                    // avancer le long du rayon
-                    t += _StepSize;
+                    t += dt;
                 }
 
-                // booster un peu la luminosité finale
                 accRGB *= _Brightness;
 
                 return float4(accRGB, accA);

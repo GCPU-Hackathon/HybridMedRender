@@ -1,6 +1,7 @@
 using UnityEngine;
 using System;
 using System.IO;
+using Newtonsoft.Json;
 
 [Serializable]
 public class VolumeMetadataDVR {
@@ -15,7 +16,7 @@ public class VolumeDVR : MonoBehaviour
 {
     [Header("Input files (in StreamingAssets)")]
     public string jsonFileName = "volume_meta.json";
-    public string rawFileName = "volume.raw";
+    public string rawFileName  = "volume.raw";
     public string tfFileName   = "transfer_function.json";
 
     [Header("Material using the volume raymarch shader")]
@@ -24,11 +25,14 @@ public class VolumeDVR : MonoBehaviour
     Texture3D volumeTex;
     Texture2D tfTex;
 
+    private Texture2D _labelCtrlTex;
+    private Color[]   _labelCtrlPixels;
+
     void Start()
     {
         string metaPath = Path.Combine(Application.streamingAssetsPath, jsonFileName);
         string metaJson = File.ReadAllText(metaPath);
-        VolumeMetadataDVR meta = JsonUtility.FromJson<VolumeMetadataDVR>(metaJson);
+        VolumeMetadataDVR meta = JsonConvert.DeserializeObject<VolumeMetadataDVR>(metaJson);
 
         int dimX = meta.dim[0];
         int dimY = meta.dim[1];
@@ -38,77 +42,23 @@ public class VolumeDVR : MonoBehaviour
         string rawPath = Path.Combine(Application.streamingAssetsPath, rawFileName);
         byte[] bytes = File.ReadAllBytes(rawPath);
 
-        if (bytes.Length != voxelCount * sizeof(float))
-        {
-            Debug.LogWarning($"Raw size mismatch. Expected {voxelCount * sizeof(float)} bytes, got {bytes.Length} bytes.");
-        }
 
         float[] voxels = new float[voxelCount];
         Buffer.BlockCopy(bytes, 0, voxels, 0, bytes.Length);
 
-        int nonZeroCount = 0;
-        float maxVal = 0f;
-        for (int i = 0; i < voxels.Length; i++)
-        {
-            if (voxels[i] > 0.0001f) nonZeroCount++;
-            if (voxels[i] > maxVal) maxVal = voxels[i];
-        }
-        Debug.Log("Volume tex loaded: "
-            + dimX + "x" + dimY + "x" + dimZ
-            + " first voxel=" + voxels[0]
-            + " nonZeroCount=" + nonZeroCount
-            + " maxVal=" + maxVal);
-
-        // 3. Normaliser dans [0,1] si besoin
-        // Ici, pour une seg binaire tumeur >0, c’est déjà 0 ou 1.
-        // Si tu veux du scanner/IRM intensité, tu peux remapper au min/max du meta.intensity_range.
-        float minI = (meta.intensity_range != null && meta.intensity_range.Length == 2) ? meta.intensity_range[0] : 0f;
-        float maxI = (meta.intensity_range != null && meta.intensity_range.Length == 2) ? meta.intensity_range[1] : 1f;
-        float rangeI = Mathf.Max(maxI - minI, 1e-6f);
-
-        // On convertit en Color (Unity ne sait pas remplir Texture3D en raw float[], il faut passer par SetPixels/SetPixelData selon le format)
-        // On va utiliser format RFloat pour garder l'intensité en un seul canal.
-        // Color[] cols = new Color[voxelCount];
-        // for (int i = 0; i < voxelCount; i++)
-        // {
-        //     float v01 = Mathf.Clamp01((voxels[i] - minI) / rangeI);
-        //     cols[i] = new Color(v01, v01, v01, v01); // RGBA = même valeur
-        // }
-
-        // // 4. Créer la Texture3D
-        // volumeTex = new Texture3D(dimX, dimY, dimZ, TextureFormat.RFloat, false);
-        // volumeTex.wrapMode = TextureWrapMode.Clamp;
-        // volumeTex.filterMode = FilterMode.Bilinear; // interpolation trilineaire
-        // volumeTex.SetPixels(cols);
-        // volumeTex.Apply(updateMipmaps: false);
-
-        // // 5. Donner la texture (et tailles) au matériau
-        // volumeMaterial.SetTexture("_VolumeTex", volumeTex);
-
         Color[] cols = new Color[voxelCount];
+        float maxVal = 0f;
         for (int i = 0; i < voxelCount; i++)
         {
-            float v = voxels[i]; // 0,1,2,4,...
+            float v = voxels[i];
             cols[i] = new Color(v, v, v, v);
+            if (v > maxVal) maxVal = v;
         }
 
         string tfPath = Path.Combine(Application.streamingAssetsPath, tfFileName);
-
         bool isLabelMap;
         float p1, p99;
         tfTex = TransferFunctionLoader.LoadTransferFunctionLUT(tfPath, out isLabelMap, out p1, out p99);
-
-        // 5. Envoyer tout ça au material
-        volumeMaterial.SetTexture("_VolumeTex", volumeTex);
-        volumeMaterial.SetTexture("_TFTex", tfTex);
-
-        // dire au shader si c'est du labelmap ou du continuous
-        volumeMaterial.SetInt("_IsLabelMap", isLabelMap ? 1 : 0);
-
-        // si continuous: on aura besoin de renormaliser intensity -> [0,1]
-        // le shader aura besoin de ces bornes pour retransformer la valeur brute en 0..1
-        volumeMaterial.SetFloat("_P1", p1);
-        volumeMaterial.SetFloat("_P99", p99);
 
         volumeTex = new Texture3D(dimX, dimY, dimZ, TextureFormat.RFloat, false);
         volumeTex.wrapMode = TextureWrapMode.Clamp;
@@ -117,17 +67,13 @@ public class VolumeDVR : MonoBehaviour
         volumeTex.Apply(false);
 
         volumeMaterial.SetTexture("_VolumeTex", volumeTex);
+        volumeMaterial.SetTexture("_TFTex", tfTex);
+        volumeMaterial.SetInt("_IsLabelMap", isLabelMap ? 1 : 0);
+        volumeMaterial.SetFloat("_P1", p1);
+        volumeMaterial.SetFloat("_P99", p99);
+        volumeMaterial.SetVector("_Dim", new Vector4(dimX, dimY, dimZ, 1f));
 
-        volumeMaterial.SetVector("_VolumeDim", new Vector3(dimX, dimY, dimZ));
 
-        Debug.Log("Volume tex loaded: "
-            + volumeTex.width + "x"
-            + volumeTex.height + "x"
-            + volumeTex.depth
-            + " first voxel=" + volumeTex.GetPixel(0, 0, 0).r);
-
-        // On passe aussi une matrice voxel->monde si tu veux l'alignement scanner
-        // Sinon on peut juste afficher dans l'espace [0,1]^3
         Matrix4x4 affine = Matrix4x4.identity;
         if (meta.affine != null && meta.affine.Length == 4 &&
             meta.affine[0].Length == 4 &&
@@ -140,11 +86,139 @@ public class VolumeDVR : MonoBehaviour
             affine.SetRow(2, new Vector4(meta.affine[2][0], meta.affine[2][1], meta.affine[2][2], meta.affine[2][3]));
             affine.SetRow(3, new Vector4(meta.affine[3][0], meta.affine[3][1], meta.affine[3][2], meta.affine[3][3]));
         }
-        volumeMaterial.SetMatrix("_Affine", affine);
+        else
+        {
+            Debug.LogWarning("meta.affine is missing or not 4x4, using identity.");
+        }
 
-        // IMPORTANT :
-        // Mets ce script sur un cube dans la scène.
-        // Le cube doit utiliser 'volumeMaterial'.
-        // Le shader va considérer le cube comme la boîte du volume.
+        Matrix4x4 invAffine = affine.inverse;
+
+        volumeMaterial.SetMatrix("_Affine", affine);
+        volumeMaterial.SetMatrix("_InvAffine", invAffine);
+
+        Debug.Log($"Volume loaded {dimX}x{dimY}x{dimZ} maxVal={maxVal}");
+        Debug.Log("Affine (voxel->mm):\n" + affine);
+        Debug.Log("InvAffine (mm->voxel):\n" + invAffine);
+
+        _labelCtrlTex = new Texture2D(256, 1, TextureFormat.RGBAFloat, false);
+        _labelCtrlTex.wrapMode = TextureWrapMode.Clamp;
+        _labelCtrlTex.filterMode = FilterMode.Point;
+
+        _labelCtrlPixels = new Color[256];
+        for (int i = 0; i < 256; i++)
+        {
+            _labelCtrlPixels[i] = new Color(1f, 1f, 1f, 1f);
+        }
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
+
+        volumeMaterial.SetTexture("_LabelCtrlTex", _labelCtrlTex);
+
+        FitGameObjectToMedicalBBox(meta, affine); // <<< NEW
+    }
+
+    void FitGameObjectToMedicalBBox(VolumeMetadataDVR meta, Matrix4x4 affineVoxelToMM)
+    {
+        int dimX = meta.dim[0];
+        int dimY = meta.dim[1];
+        int dimZ = meta.dim[2];
+
+        Vector3[] cornersVoxel = new Vector3[8];
+        cornersVoxel[0] = new Vector3(0,       0,       0      );
+        cornersVoxel[1] = new Vector3(dimX-1,  0,       0      );
+        cornersVoxel[2] = new Vector3(0,       dimY-1,  0      );
+        cornersVoxel[3] = new Vector3(0,       0,       dimZ-1 );
+        cornersVoxel[4] = new Vector3(dimX-1,  dimY-1,  0      );
+        cornersVoxel[5] = new Vector3(dimX-1,  0,       dimZ-1 );
+        cornersVoxel[6] = new Vector3(0,       dimY-1,  dimZ-1 );
+        cornersVoxel[7] = new Vector3(dimX-1,  dimY-1,  dimZ-1 );
+
+        Vector3[] cornersMM = new Vector3[8];
+        for (int c = 0; c < 8; c++)
+        {
+            Vector3 ijk = cornersVoxel[c];
+            Vector4 mmH = affineVoxelToMM * new Vector4(ijk.x, ijk.y, ijk.z, 1f);
+            cornersMM[c] = new Vector3(mmH.x, mmH.y, mmH.z);
+        }
+
+        Vector3 minMM = cornersMM[0];
+        Vector3 maxMM = cornersMM[0];
+        for (int c = 1; c < 8; c++)
+        {
+            minMM = Vector3.Min(minMM, cornersMM[c]);
+            maxMM = Vector3.Max(maxMM, cornersMM[c]);
+        }
+
+        Vector3 sizeMM = maxMM - minMM;
+        Vector3 centerMM = (minMM + maxMM) * 0.5f;
+
+        Vector3 sizeMeters   = sizeMM / 1000f;
+        Vector3 centerMeters = centerMM / 1000f;
+
+        transform.localScale = sizeMeters;
+
+        transform.position = centerMeters;
+
+        transform.rotation = Quaternion.Euler(new Vector3(-90, 0, 0));
+
+        Debug.Log($"BBox mm min={minMM} max={maxMM} -> sizeMM={sizeMM}");
+        Debug.Log($"Placed object at {centerMeters} m with scale {sizeMeters} m");
+    }
+
+    public void SetLabelVisible(int labelIndex, bool visible)
+    {
+        if (labelIndex < 0 || labelIndex > 255) return;
+        var c = _labelCtrlPixels[labelIndex];
+        c.a = visible ? 1f : 0f;
+        _labelCtrlPixels[labelIndex] = c;
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
+    }
+
+    public void SetLabelOpacity(int labelIndex, float opacity01)
+    {
+        if (labelIndex < 0 || labelIndex > 255) return;
+        var c = _labelCtrlPixels[labelIndex];
+        c.a = Mathf.Clamp01(opacity01);
+        _labelCtrlPixels[labelIndex] = c;
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
+    }
+
+    public void SetLabelTint(int labelIndex, Color tintRGB)
+    {
+        if (labelIndex < 0 || labelIndex > 255) return;
+        var c = _labelCtrlPixels[labelIndex];
+        c.r = tintRGB.r;
+        c.g = tintRGB.g;
+        c.b = tintRGB.b;
+        _labelCtrlPixels[labelIndex] = c;
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
+    }
+
+    public void SoloLabel(int soloIndex)
+    {
+        for (int i = 0; i < 256; i++)
+        {
+            var c = _labelCtrlPixels[i];
+            c.a = (i == soloIndex) ? 1f : 0f;
+            _labelCtrlPixels[i] = c;
+        }
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
+    }
+
+    public void ShowAll()
+    {
+        for (int i = 0; i < 256; i++)
+        {
+            var c = _labelCtrlPixels[i];
+            c.a = 1f;
+            c.r = 1f; c.g = 1f; c.b = 1f;
+            _labelCtrlPixels[i] = c;
+        }
+        _labelCtrlTex.SetPixels(_labelCtrlPixels);
+        _labelCtrlTex.Apply(false);
     }
 }
