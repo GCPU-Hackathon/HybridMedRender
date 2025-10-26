@@ -1,9 +1,9 @@
-# 🩺 HybridMedRender — Hybrid Medical Image Visualization (Surface + Volume Rendering)
+# HybridMedRender — Hybrid Medical Image Visualization (Surface + Volume Rendering)
 
 **HybridMedRender** is a GPU-based rendering solution that reproduces and extends the method described in  
 **_“Hybrid visualisation of medical image: Surface and volume rendering”_**  
 (*Palma, B., Casanova-Salas, P., Gimeno, J., & Casas-Yrurzum, S., Computers & Graphics, 133, 104453, 2025*).  
-👉 [DOI: 10.1016/j.cag.2025.104453](https://doi.org/10.1016/j.cag.2025.104453)
+[DOI: 10.1016/j.cag.2025.104453](https://doi.org/10.1016/j.cag.2025.104453)
 
 It also supports the **[VRDF SDK (Volume Rendering Data Format)](https://github.com/guillaume-schneider/vrdf-sdk)** —  
 a lightweight, open-spec binary format designed for volumetric datasets (CT, MRI, segmentation) with metadata and transfer-function definitions.  
@@ -13,9 +13,11 @@ This project implements the paper’s **hybrid visualization technique**, combin
 
 This hybrid approach preserves the structural clarity of surface models while maintaining the depth and density information from the original medical scans. It supports **interactive exploration**, **region of interest (ROI) tools**, and **VR visualization** for immersive surgical planning and anatomical understanding.
 
+![Demo](docs/resampling.gif)
+
 ---
 
-## 🧠 Key Features
+## Key Features
 
 - **Hybrid Rendering (OIT + DVR)**  
   Real-time fusion of surface-based 3D models and volumetric medical data.
@@ -37,7 +39,7 @@ This hybrid approach preserves the structural clarity of surface models while ma
 
 ---
 
-## 🧩 Repository Structure
+## Repository Structure
 
 ```text
 HybridMedRender/
@@ -71,7 +73,7 @@ HybridMedRender/
 
 ---
 
-## ⚙️ Technical Overview
+## Technical Overview
 
 1. **OIT Geometry Pass**  
    Each anatomical mesh writes its fragments into GPU buffers instead of the framebuffer:  
@@ -91,7 +93,7 @@ HybridMedRender/
 
 ---
 
-## 🧰 Requirements
+## Requirements
 
 - **Unity 2022.3 LTS** or newer  
 - **Direct3D 11 / URP or Built-in Render Pipeline**  
@@ -99,7 +101,7 @@ HybridMedRender/
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 1. Clone this repository:
    ```bash
@@ -115,7 +117,7 @@ HybridMedRender/
 
 ---
 
-## 📚 Reference
+## Reference
 
 > Palma, B., Casanova-Salas, P., Gimeno, J., & Casas-Yrurzum, S. (2025).  
 > **Hybrid visualisation of medical image: Surface and volume rendering.**  
@@ -124,7 +126,7 @@ HybridMedRender/
 
 ---
 
-## ⚖️ License
+## License
 
 This project is released under the **MIT License**.  
 You are free to use, modify, and distribute the code for research and educational purposes.  
@@ -132,7 +134,7 @@ You are free to use, modify, and distribute the code for research and educationa
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 HybridMedRender is a **research prototype** intended for educational and experimental visualization only.  
 It is **not a certified medical device** and should **not be used for diagnostic or surgical purposes**.
